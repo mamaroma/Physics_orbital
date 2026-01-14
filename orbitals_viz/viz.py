@@ -5,16 +5,10 @@ from .grid import GridCoords
 
 
 def _pick_iso_from_quantile(values: np.ndarray, q: float) -> float:
-    """
-    values: nonnegative typically (density) or abs(signed)
-    q: 0..1
-    """
     q = float(q)
     if not (0.0 < q < 1.0):
         raise ValueError("--iso_quantile must be between 0 and 1 (e.g. 0.985).")
-
     flat = values.ravel()
-    # ignore NaNs just in case
     flat = flat[np.isfinite(flat)]
     if flat.size == 0:
         return 0.0
@@ -26,10 +20,6 @@ def _nearest_index(vec: np.ndarray, x: float) -> int:
 
 
 def _make_slice(psi: np.ndarray, coords: GridCoords, plane: str, pos: float, mode: str):
-    """
-    Returns (heatmap_trace, annotation_text).
-    Heatmap shows density or signed Re(psi) in the chosen plane.
-    """
     if mode == "density":
         field = np.abs(psi) ** 2
         label = "|ψ|²"
@@ -42,7 +32,7 @@ def _make_slice(psi: np.ndarray, coords: GridCoords, plane: str, pos: float, mod
     if plane == "xy":
         k = _nearest_index(z, pos)
         img = field[:, :, k]
-        trace = go.Heatmap(x=x, y=y, z=img.T)  # transpose for visual orientation
+        trace = go.Heatmap(x=x, y=y, z=img.T)
         txt = f"Slice: z={z[k]:.3g}, field={label}"
         return trace, txt
 
@@ -63,6 +53,43 @@ def _make_slice(psi: np.ndarray, coords: GridCoords, plane: str, pos: float, mod
     raise ValueError("Unknown slice plane. Use xy/xz/yz.")
 
 
+def make_cloud_figure(
+    samples_xyz: np.ndarray,
+    *,
+    color_value: np.ndarray | None = None,
+    title: str,
+    point_size: float = 2.0,
+    opacity: float = 0.6,
+):
+    """
+    samples_xyz: (N,3)
+    color_value:
+      - None => single-color markers
+      - array (N,) => marker color mapped by Plotly
+    """
+    x, y, z = samples_xyz[:, 0], samples_xyz[:, 1], samples_xyz[:, 2]
+
+    marker = dict(size=point_size, opacity=opacity)
+    if color_value is not None:
+        marker["color"] = color_value
+        marker["colorscale"] = "RdBu"
+        marker["showscale"] = True
+
+    trace = go.Scatter3d(
+        x=x, y=y, z=z,
+        mode="markers",
+        marker=marker,
+    )
+
+    fig = go.Figure(data=[trace])
+    fig.update_layout(
+        title=title,
+        scene=dict(aspectmode="cube"),
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+    return fig
+
+
 def make_figure(
     psi: np.ndarray,
     coords: GridCoords,
@@ -72,11 +99,6 @@ def make_figure(
     slice_pos: float,
     title: str,
 ):
-    """
-    mode:
-      - density: plot |psi|^2 isosurface
-      - signed: plot two isosurfaces Re(psi)=+t and Re(psi)=-t (approximated via 2 traces)
-    """
     x, y, z = coords.x, coords.y, coords.z
 
     if mode == "density":
@@ -103,12 +125,8 @@ def make_figure(
             margin=dict(l=0, r=0, t=40, b=0),
         )
 
-        # Add slice as separate 2D figure below via subplot-like approach (simple: new figure)
-        # Но чтобы оставаться одним HTML: добавим вторую фигуру через Plotly "domain" в layout.
-        # Для простоты: сделаем 2-row grid через layout with xaxis/yaxis for 2D heatmap.
-        fig2 = go.Figure(fig)  # clone
+        fig2 = go.Figure(fig)
         fig2.add_trace(slice_trace)
-        # Put slice heatmap on 2D axes, keep 3D scene as scene
         fig2.data[-1].update(xaxis="x", yaxis="y")
         fig2.update_layout(
             xaxis=dict(domain=[0, 1], anchor="y"),
@@ -123,7 +141,6 @@ def make_figure(
     t = _pick_iso_from_quantile(np.abs(signed), iso_quantile)
     vmax = float(np.max(np.abs(signed)))
 
-    # Two separate traces: +t..vmax and -vmax..-t
     iso_pos = go.Isosurface(
         x=np.repeat(x, coords.N * coords.N),
         y=np.tile(np.repeat(y, coords.N), coords.N),
